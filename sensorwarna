@@ -1,0 +1,105 @@
+#define S0 4
+#define S1 5
+#define S2 18
+#define S3 19
+#define sensorOut 21
+
+// =============================================
+// KALIBRASI - Sesuaikan nilai ini!
+// =============================================
+int whiteR = 120, whiteG = 100, whiteB = 110;
+int blackR = 800, blackG = 750, blackB = 780;
+
+int readRed() {
+  digitalWrite(S2, LOW);
+  digitalWrite(S3, LOW);
+  delay(10);
+  return pulseIn(sensorOut, LOW);
+}
+
+int readGreen() {
+  digitalWrite(S2, HIGH);
+  digitalWrite(S3, HIGH);
+  delay(10);
+  return pulseIn(sensorOut, LOW);
+}
+
+int readBlue() {
+  digitalWrite(S2, LOW);
+  digitalWrite(S3, HIGH);
+  delay(10);
+  return pulseIn(sensorOut, LOW);
+}
+
+int normalize(int value, int minVal, int maxVal) {
+  int result = map(value, maxVal, minVal, 0, 255);
+  return constrain(result, 0, 255);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(S0, OUTPUT);
+  pinMode(S1, OUTPUT);
+  pinMode(S2, OUTPUT);
+  pinMode(S3, OUTPUT);
+  pinMode(sensorOut, INPUT);
+
+  digitalWrite(S0, HIGH);
+  digitalWrite(S1, LOW);
+
+  Serial.println("ESP32 Color Sensor Ready...");
+}
+
+void loop() {
+  int rawR = 0, rawG = 0, rawB = 0;
+
+  for (int i = 0; i < 10; i++) {
+    rawR += readRed();
+    rawG += readGreen();
+    rawB += readBlue();
+  }
+  rawR /= 10;
+  rawG /= 10;
+  rawB /= 10;
+
+  int normR = normalize(rawR, whiteR, blackR);
+  int normG = normalize(rawG, whiteG, blackG);
+  int normB = normalize(rawB, whiteB, blackB);
+
+  Serial.print("RAW R: "); Serial.print(rawR);
+  Serial.print(" G: "); Serial.print(rawG);
+  Serial.print(" B: "); Serial.println(rawB);
+
+  Serial.print("NORM R: "); Serial.print(normR);
+  Serial.print(" G: "); Serial.print(normG);
+  Serial.print(" B: "); Serial.println(normB);
+
+  String warna = "TIDAK DIKETAHUI";
+  int threshold = 30;
+
+  // Kuning = R tinggi + G tinggi, B rendah
+  bool rTinggi = normR > 150;
+  bool gTinggi = normG > 150;
+  bool bRendah = normB < (normR - threshold) && normB < (normG - threshold);
+
+  if (normR > 200 && normG > 200 && normB > 200) {
+    warna = "PUTIH";
+  } else if (normR < 50 && normG < 50 && normB < 50) {
+    warna = "HITAM";
+  } else if (rTinggi && gTinggi && bRendah && abs(normR - normG) < threshold) {
+    // R dan G sama-sama tinggi, B jauh lebih rendah = KUNING
+    warna = "KUNING";
+  } else if (normR > normG + threshold && normR > normB + threshold) {
+    warna = "MERAH";
+  } else if (normG > normR + threshold && normG > normB + threshold) {
+    warna = "HIJAU";
+  } else if (normB > normR + threshold && normB > normG + threshold) {
+    warna = "BIRU";
+  }
+
+  Serial.print("=> WARNA: ");
+  Serial.println(warna);
+  Serial.println("---");
+
+  delay(500);
+}
