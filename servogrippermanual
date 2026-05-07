@@ -1,0 +1,24 @@
+//Gripper FIXXX (manual)
+
+#include <ESP32Servo.h>
+
+Servo capit;
+int pinServo = 18;
+
+void setup() {
+  Serial.begin(115200);
+  capit.attach(pinServo);
+}
+
+void loop() {
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == 'o') { // open
+      capit.write(130);
+    }
+    else if (cmd == 'c') { // close
+      capit.write(0);
+    }
+  }
+}
