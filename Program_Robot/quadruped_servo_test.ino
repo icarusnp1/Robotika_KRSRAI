@@ -54,9 +54,9 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 // tick = (us / 20000.0) * 4096 pada frekuensi 50Hz
 #define US_TO_TICK(us) ((uint16_t)((us / 20000.0) * 4096))
 
-#define PULSE_MAJU  1100
-#define PULSE_BALIK 1650
-#define PULSE_STOP  1375
+#define PULSE_MAJU  700
+#define PULSE_BALIK 1200
+#define PULSE_STOP  1500
 
 const uint16_t TICK_MAJU  = US_TO_TICK(PULSE_MAJU);
 const uint16_t TICK_BALIK = US_TO_TICK(PULSE_BALIK);
