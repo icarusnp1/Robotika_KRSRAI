@@ -1,0 +1,61 @@
+//ultrasonik dan gripper 
+#include <ESP32Servo.h>
+
+Servo capit;
+
+int pinServo = 18;
+
+// Ultrasonik
+const int trigPin = 5;
+const int echoPin = 19;
+
+long durasi;
+float jarak;
+
+void setup() {
+  Serial.begin(115200);
+
+  capit.attach(pinServo);
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  capit.write(0); // awal tertutup
+}
+
+void loop() {
+
+  // ===== CONTROL MANUAL SERIAL =====
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == 'o') {
+      capit.write(130); // buka
+      Serial.println("Gripper Open");
+    }
+  }
+
+  // ===== BACA ULTRASONIK =====
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  durasi = pulseIn(echoPin, HIGH);
+
+  jarak = durasi * 0.034 / 2;
+
+  Serial.print("Jarak: ");
+  Serial.print(jarak);
+  Serial.println(" cm");
+
+  // ===== AUTO CLOSE =====
+  if (jarak <= 10) {
+    capit.write(0); // tutup
+    Serial.println("Objek Terdeteksi - Gripper Close");
+  }
+
+  delay(200);
+}
