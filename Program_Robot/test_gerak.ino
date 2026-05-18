@@ -8,8 +8,8 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 
 #define US_TO_TICK(us) ((uint16_t)((us / 20000.0) * 4096))
 
-#define PULSE_MAJU  1650
-#define PULSE_BALIK 1050
+#define PULSE_MAJU  1550
+#define PULSE_BALIK 1200
 #define PULSE_STOP  1375
 
 const uint16_t TICK_MAJU  = US_TO_TICK(PULSE_MAJU);

@@ -54,9 +54,9 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 // tick = (us / 20000.0) * 4096 pada frekuensi 50Hz
 #define US_TO_TICK(us) ((uint16_t)((us / 20000.0) * 4096))
 
-#define PULSE_MAJU  700
-#define PULSE_BALIK 1200
-#define PULSE_STOP  1500
+#define PULSE_MAJU  1030
+#define PULSE_BALIK 1630
+#define PULSE_STOP  1375
 
 const uint16_t TICK_MAJU  = US_TO_TICK(PULSE_MAJU);
 const uint16_t TICK_BALIK = US_TO_TICK(PULSE_BALIK);
@@ -383,8 +383,8 @@ void setup() {
     servo[i].pulsing    = false;
     servo[i].isMoving   = false;
     servo[i].moveTick   = TICK_MAJU;
-    servo[i].delayGerak = 500;   // default 500ms
-    servo[i].delayJeda  = 500;   // default 500ms
+    servo[i].delayGerak = 100;   // default 500ms
+    servo[i].delayJeda  = 1000;   // default 500ms
     servo[i].lastChange = 0;
     setPWM(i, TICK_STOP);
   }
