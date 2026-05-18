@@ -12,8 +12,8 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 // PWM KHUSUS CH0 / HIP
 // Silakan ubah sendiri
 // ==========================
-#define CH0_MAJU   1565
-#define CH0_BALIK  1115
+#define CH0_MAJU   1600
+#define CH0_BALIK  1150
 #define CH0_STOP   1375
 
 // ==========================
@@ -21,7 +21,7 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 // Silakan ubah sendiri
 // ==========================
 #define CH1_TURUN   1600
-#define CH1_NAIK  1050
+#define CH1_NAIK  1150
 #define CH1_STOP   1375
 
 const uint16_t TICK_CH0_MAJU  = US_TO_TICK(CH0_MAJU);
