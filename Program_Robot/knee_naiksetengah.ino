@@ -10,7 +10,8 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 #define US_TO_TICK(us) ((uint16_t)(((float)(us) / 20000.0) * 4096))
 
 #define DEFAULT_STOP_US 1375
-#define JEDA_MS 100
+
+#define JEDA_MS 150
 
 // ============================================================
 // INDEX KAKI
@@ -29,18 +30,24 @@ struct LegConfig {
   uint8_t hipCH;
   uint8_t kneeCH;
 
+  // HIP
   uint16_t hipMajuUS;
   uint16_t hipBalikUS;
   uint16_t hipStopUS;
 
-  uint16_t kneeUpUS;
+  // KNEE
+  uint16_t kneeNaikUS;
+  uint16_t kneeTurunSedikitUS;
+  uint16_t kneeHoldUS;
   uint16_t kneeStopUS;
 
-  uint16_t kneeUpMs;
+  // DURASI
+  uint16_t kneeTurunSedikitMs;
+  uint16_t kneeNaikMs;
   uint16_t hipPrepareMs;
   uint16_t hipPushMs;
 
-  // Untuk gerak maju
+  // LOGIKA ARAH MAJU
   uint16_t hipPrepareMajuUS;
   uint16_t hipPushMajuUS;
 };
@@ -48,6 +55,7 @@ struct LegConfig {
 // ============================================================
 // KONFIGURASI 4 KAKI
 //
+// Mapping:
 // CH0 = HIP  Belakang Kiri
 // CH1 = KNEE Belakang Kiri
 //
@@ -63,10 +71,7 @@ struct LegConfig {
 
 LegConfig kaki[4] = {
   // ==========================================================
-  // BELAKANG KIRI
-  // Sisi kiri:
-  // prepare maju = BALIK
-  // push maju    = MAJU
+  // 0. BELAKANG KIRI
   // ==========================================================
   {
     "Belakang Kiri",
@@ -76,21 +81,20 @@ LegConfig kaki[4] = {
     // hipMaju, hipBalik, hipStop
     1600, 1090, 1375,
 
-    // kneeUp, kneeStop
-    1050, 1375,
+    // kneeNaik, kneeTurunSedikit, kneeHold, kneeStop
+    1050, 1660, 1550, 1375,
 
-    // kneeUpMs, hipPrepareMs, hipPushMs
-    180, 400, 400,
+    // kneeTurunSedikitMs, kneeNaikMs, hipPrepareMs, hipPushMs
+    180, 180, 400, 400,
 
-    // hipPrepareMaju, hipPushMaju
-    1090, 1660
+    // Logika sisi kiri:
+    // prepare maju = BALIK
+    // push maju    = MAJU
+    1090, 1600
   },
 
   // ==========================================================
-  // DEPAN KIRI
-  // Sisi kiri:
-  // prepare maju = BALIK
-  // push maju    = MAJU
+  // 1. DEPAN KIRI
   // ==========================================================
   {
     "Depan Kiri",
@@ -100,21 +104,20 @@ LegConfig kaki[4] = {
     // hipMaju, hipBalik, hipStop
     1645, 1070, 1375,
 
-    // kneeUp, kneeStop
-    1110, 1375,
+    // kneeNaik, kneeTurunSedikit, kneeHold, kneeStop
+    1110, 1620, 1510, 1375,
 
-    // kneeUpMs, hipPrepareMs, hipPushMs
-    180, 400, 400,
+    // kneeTurunSedikitMs, kneeNaikMs, hipPrepareMs, hipPushMs
+    180, 180, 400, 400,
 
-    // hipPrepareMaju, hipPushMaju
-    1110, 1645
+    // Logika sisi kiri:
+    // prepare maju = BALIK
+    // push maju    = MAJU
+    1070, 1645
   },
 
   // ==========================================================
-  // DEPAN KANAN
-  // Sisi kanan:
-  // prepare maju = MAJU
-  // push maju    = BALIK
+  // 2. DEPAN KANAN
   // ==========================================================
   {
     "Depan Kanan",
@@ -124,21 +127,20 @@ LegConfig kaki[4] = {
     // hipMaju, hipBalik, hipStop
     1630, 1095, 1375,
 
-    // kneeUp, kneeStop
-    1050, 1375,
+    // kneeNaik, kneeTurunSedikit, kneeHold, kneeStop
+    1050, 1670, 1500, 1375,
 
-    // kneeUpMs, hipPrepareMs, hipPushMs
-    180, 400, 400,
+    // kneeTurunSedikitMs, kneeNaikMs, hipPrepareMs, hipPushMs
+    180, 180, 400, 400,
 
-    // hipPrepareMaju, hipPushMaju
-    1630, 1080
+    // Logika sisi kanan:
+    // prepare maju = MAJU
+    // push maju    = BALIK
+    1630, 1095
   },
 
   // ==========================================================
-  // BELAKANG KANAN
-  // Sisi kanan:
-  // prepare maju = MAJU
-  // push maju    = BALIK
+  // 3. BELAKANG KANAN
   // ==========================================================
   {
     "Belakang Kanan",
@@ -148,15 +150,27 @@ LegConfig kaki[4] = {
     // hipMaju, hipBalik, hipStop
     1630, 1090, 1375,
 
-    // kneeUp, kneeStop
-    1050, 1375,
+    // kneeNaik, kneeTurunSedikit, kneeHold, kneeStop
+    1050, 1670, 1500, 1375,
 
-    // kneeUpMs, hipPrepareMs, hipPushMs
-    180, 400, 400,
+    // kneeTurunSedikitMs, kneeNaikMs, hipPrepareMs, hipPushMs
+    180, 180, 400, 400,
 
-    // hipPrepareMaju, hipPushMaju
+    // Logika sisi kanan:
+    // prepare maju = MAJU
+    // push maju    = BALIK
     1630, 1090
   }
+};
+
+// ============================================================
+// URUTAN TAHAP 2
+// ============================================================
+uint8_t prepareOrder[4] = {
+  LEG_FL,
+  LEG_FR,
+  LEG_BL,
+  LEG_BR
 };
 
 // ============================================================
@@ -180,14 +194,6 @@ void stopLeg(const LegConfig &leg) {
   stopKnee(leg);
 }
 
-void stopAllHip() {
-  for (uint8_t i = 0; i < 4; i++) {
-    stopHip(kaki[i]);
-  }
-
-  Serial.println("[STOP] Semua HIP stop.");
-}
-
 void stopAll() {
   for (uint8_t i = 0; i < SERVO_COUNT; i++) {
     setServoUS(i, DEFAULT_STOP_US);
@@ -201,47 +207,93 @@ void stopAll() {
 }
 
 // ============================================================
-// Q = SEMUA KNEE NAIK MENTOK
-// Knee dinaikkan, lalu stop.
-// Setelah ini knee tidak digerakkan lagi.
+// TAHAP 1
+// Semua knee turun sedikit sampai sejajar, lalu hold.
 // ============================================================
-void semuaKneeNaikMentok() {
+void tahap1KneeSejajarHold() {
   Serial.println();
   Serial.println("======================================");
-  Serial.println("SEMUA KNEE NAIK MENTOK");
+  Serial.println("TAHAP 1: SEMUA KNEE TURUN SEJAJAR");
   Serial.println("======================================");
 
+  // Semua knee turun sedikit
   for (uint8_t i = 0; i < 4; i++) {
-    Serial.print("[KNEE UP] ");
+    Serial.print("[KNEE TURUN] ");
     Serial.println(kaki[i].nama);
 
-    setServoUS(kaki[i].kneeCH, kaki[i].kneeUpUS);
+    setServoUS(kaki[i].kneeCH, kaki[i].kneeTurunSedikitUS);
   }
 
-  uint16_t maxMs = 0;
+  // Ambil durasi terbesar
+  uint16_t maxTurunMs = 0;
   for (uint8_t i = 0; i < 4; i++) {
-    if (kaki[i].kneeUpMs > maxMs) {
-      maxMs = kaki[i].kneeUpMs;
+    if (kaki[i].kneeTurunSedikitMs > maxTurunMs) {
+      maxTurunMs = kaki[i].kneeTurunSedikitMs;
     }
   }
 
-  delay(maxMs);
+  delay(maxTurunMs);
 
+  // Semua knee hold agar posisi sejajar dan menahan beban
   for (uint8_t i = 0; i < 4; i++) {
-    stopKnee(kaki[i]);
+    Serial.print("[KNEE HOLD] ");
+    Serial.println(kaki[i].nama);
+
+    setServoUS(kaki[i].kneeCH, kaki[i].kneeHoldUS);
   }
 
-  Serial.println("[DONE] Semua knee sudah naik mentok dan stop.");
+  Serial.println("[DONE] Tahap 1 selesai. Semua knee sejajar dan hold.");
 }
 
 // ============================================================
-// 1/2/3/4 = HIP MAJU PER KAKI
+// KNEE NAIK MENTOK SATU KAKI
 // ============================================================
-void hipMajuSatuKaki(uint8_t legIndex) {
+void kneeNaikMentok(const LegConfig &leg) {
+  Serial.print("[KNEE NAIK MENTOK] ");
+  Serial.println(leg.nama);
+
+  setServoUS(leg.kneeCH, leg.kneeNaikUS);
+  delay(leg.kneeNaikMs);
+
+  stopKnee(leg);
+  delay(JEDA_MS);
+}
+
+// ============================================================
+// KNEE TURUN LAGI SAMPAI SEJAJAR + HOLD
+// ============================================================
+void kneeTurunSejajarHold(const LegConfig &leg) {
+  Serial.print("[KNEE TURUN SEJAJAR] ");
+  Serial.println(leg.nama);
+
+  setServoUS(leg.kneeCH, leg.kneeTurunSedikitUS);
+  delay(leg.kneeTurunSedikitMs);
+
+  setServoUS(leg.kneeCH, leg.kneeHoldUS);
+  delay(JEDA_MS);
+}
+
+// ============================================================
+// PREPARE SATU KAKI MAJU
+//
+// Urutan:
+// 1. Knee naik mentok
+// 2. Hip maju ke depan
+// 3. Knee turun lagi sejajar + hold
+// ============================================================
+void prepareSatuKakiMaju(uint8_t legIndex) {
   LegConfig &leg = kaki[legIndex];
 
   Serial.println();
-  Serial.print("[HIP PREPARE MAJU] ");
+  Serial.print("===== PREPARE MAJU: ");
+  Serial.print(leg.nama);
+  Serial.println(" =====");
+
+  // 1. Knee naik mentok
+  kneeNaikMentok(leg);
+
+  // 2. Hip maju ke depan
+  Serial.print("[HIP MAJU KE DEPAN] ");
   Serial.println(leg.nama);
 
   setServoUS(leg.hipCH, leg.hipPrepareMajuUS);
@@ -250,20 +302,33 @@ void hipMajuSatuKaki(uint8_t legIndex) {
   stopHip(leg);
   delay(JEDA_MS);
 
-  Serial.print("[DONE] Hip maju: ");
+  // 3. Knee turun lagi sampai sejajar + hold
+  kneeTurunSejajarHold(leg);
+
+  Serial.print("[DONE PREPARE] ");
   Serial.println(leg.nama);
 }
 
 // ============================================================
-// P = PUSH SEMUA HIP BERSAMAAN
-// Semua hip bergerak ke arah dorong agar robot maju.
+// SEMUA HIP PUSH MUNDUR BERSAMAAN
+//
+// Semua kaki sudah menapak/sejajar.
+// Semua hip bergerak mundur/push agar robot terdorong maju.
 // ============================================================
 void pushSemuaHipMaju() {
   Serial.println();
   Serial.println("======================================");
-  Serial.println("PUSH SEMUA HIP BERSAMAAN");
+  Serial.println("PUSH SEMUA HIP: ROBOT MAJU");
   Serial.println("======================================");
 
+  // Pastikan semua knee tetap hold
+  for (uint8_t i = 0; i < 4; i++) {
+    setServoUS(kaki[i].kneeCH, kaki[i].kneeHoldUS);
+  }
+
+  delay(JEDA_MS);
+
+  // Semua hip push bersamaan
   for (uint8_t i = 0; i < 4; i++) {
     Serial.print("[HIP PUSH] ");
     Serial.println(kaki[i].nama);
@@ -271,6 +336,7 @@ void pushSemuaHipMaju() {
     setServoUS(kaki[i].hipCH, kaki[i].hipPushMajuUS);
   }
 
+  // Stop hip berdasarkan durasi masing-masing
   bool stopped[4] = {false, false, false, false};
   uint8_t stoppedCount = 0;
   uint32_t startTime = millis();
@@ -292,7 +358,46 @@ void pushSemuaHipMaju() {
     delay(5);
   }
 
+  // Setelah push, knee tetap hold agar robot tidak langsung turun/naik aneh
+  for (uint8_t i = 0; i < 4; i++) {
+    setServoUS(kaki[i].kneeCH, kaki[i].kneeHoldUS);
+  }
+
   Serial.println("[DONE] Push semua hip selesai.");
+}
+
+// ============================================================
+// TAHAP 2
+//
+// Urutan:
+// 1. Depan kiri
+// 2. Depan kanan
+// 3. Belakang kiri
+// 4. Belakang kanan
+// 5. Semua hip push mundur bersamaan
+// ============================================================
+void tahap2PrepareLaluPush() {
+  Serial.println();
+  Serial.println("======================================");
+  Serial.println("TAHAP 2: PREPARE SATU-SATU + PUSH");
+  Serial.println("======================================");
+
+  // Pastikan sebelum tahap 2, semua knee dalam posisi hold sejajar
+  for (uint8_t i = 0; i < 4; i++) {
+    setServoUS(kaki[i].kneeCH, kaki[i].kneeHoldUS);
+  }
+
+  delay(JEDA_MS);
+
+  // Kaki maju satu per satu
+  for (uint8_t i = 0; i < 4; i++) {
+    prepareSatuKakiMaju(prepareOrder[i]);
+  }
+
+  // Semua hip push bersamaan
+  pushSemuaHipMaju();
+
+  Serial.println("[DONE] Tahap 2 selesai.");
 }
 
 // ============================================================
@@ -300,33 +405,25 @@ void pushSemuaHipMaju() {
 // ============================================================
 void printHelp() {
   Serial.println();
-  Serial.println("===== MANUAL HIP-ONLY MODE =====");
-  Serial.println("q = semua knee naik mentok");
-  Serial.println();
-  Serial.println("Gerak hip maju satu per satu:");
-  Serial.println("1 = hip depan kiri maju");
-  Serial.println("2 = hip depan kanan maju");
-  Serial.println("3 = hip belakang kiri maju");
-  Serial.println("4 = hip belakang kanan maju");
-  Serial.println();
-  Serial.println("p = push semua hip bersamaan");
-  Serial.println("x = stop semua hip");
-  Serial.println("l = stop semua servo");
+  Serial.println("===== QUADRUPED 2 TAHAP TEST =====");
+  Serial.println("q = Tahap 1: semua knee turun sejajar + hold");
+  Serial.println("w = Tahap 2: kaki maju satu per satu + semua hip push");
+  Serial.println("l = emergency stop semua servo");
   Serial.println("h = help");
   Serial.println();
-  Serial.println("Urutan test:");
-  Serial.println("q -> 1 -> 2 -> 3 -> 4 -> p");
+  Serial.println("Urutan Tahap 2:");
+  Serial.println("1. Depan kiri: knee naik mentok -> hip maju -> knee turun sejajar");
+  Serial.println("2. Depan kanan: knee naik mentok -> hip maju -> knee turun sejajar");
+  Serial.println("3. Belakang kiri: knee naik mentok -> hip maju -> knee turun sejajar");
+  Serial.println("4. Belakang kanan: knee naik mentok -> hip maju -> knee turun sejajar");
+  Serial.println("5. Semua hip push bersamaan agar robot maju");
   Serial.println();
   Serial.println("Mapping:");
-  Serial.println("CH0 = HIP belakang kiri");
-  Serial.println("CH1 = KNEE belakang kiri");
-  Serial.println("CH2 = HIP depan kiri");
-  Serial.println("CH3 = KNEE depan kiri");
-  Serial.println("CH4 = HIP depan kanan");
-  Serial.println("CH5 = KNEE depan kanan");
-  Serial.println("CH6 = HIP belakang kanan");
-  Serial.println("CH7 = KNEE belakang kanan");
-  Serial.println("================================");
+  Serial.println("CH0/CH1 = Belakang Kiri");
+  Serial.println("CH2/CH3 = Depan Kiri");
+  Serial.println("CH4/CH5 = Depan Kanan");
+  Serial.println("CH6/CH7 = Belakang Kanan");
+  Serial.println("==================================");
   Serial.println();
 }
 
@@ -348,7 +445,7 @@ void setup() {
 
   Serial.println();
   Serial.println("[BOOT] ESP32 + PCA9685 siap.");
-  Serial.println("[BOOT] Manual hip-only mode aktif.");
+  Serial.println("[BOOT] Mode 2 tahap aktif.");
   printHelp();
 }
 
@@ -362,31 +459,11 @@ void loop() {
 
     switch (cmd) {
       case 'q':
-        semuaKneeNaikMentok();
+        tahap1KneeSejajarHold();
         break;
 
-      case '1':
-        hipMajuSatuKaki(LEG_FL);
-        break;
-
-      case '2':
-        hipMajuSatuKaki(LEG_FR);
-        break;
-
-      case '3':
-        hipMajuSatuKaki(LEG_BL);
-        break;
-
-      case '4':
-        hipMajuSatuKaki(LEG_BR);
-        break;
-
-      case 'p':
-        pushSemuaHipMaju();
-        break;
-
-      case 'x':
-        stopAllHip();
+      case 'w':
+        tahap2PrepareLaluPush();
         break;
 
       case 'l':
