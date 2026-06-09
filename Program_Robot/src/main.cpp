@@ -1,63 +1,88 @@
+#define BLYNK_TEMPLATE_ID "ISI_TEMPLATE_ID"
+#define BLYNK_TEMPLATE_NAME "ISI_TEMPLATE_NAME"
+#define BLYNK_AUTH_TOKEN "ISI_AUTH_TOKEN"
+
+#define BLYNK_PRINT Serial
+
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <ESP32Servo.h>
 #include <ctype.h>
 
+// ============================================================
+// WIFI / BLYNK
+// ============================================================
+char ssid[] = "ISI_WIFI";
+char pass[] = "ISI_PASSWORD";
+
+// ============================================================
+// OBJECT
+// ============================================================
 Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
-
-#define SERVO_FREQ 50
-#define SERVO_COUNT 8
-
-#define US_TO_TICK(us) ((uint16_t)(((float)(us) / 20000.0) * 4096))
+Servo capit;
 
 // ============================================================
 // SETTING DASAR
 // ============================================================
+#define SERVO_FREQ 50
+#define SERVO_COUNT 8
 #define DEFAULT_STOP_US 1375
 
-// ============================================================
-// SETTING WAKTU
-// ============================================================
+#define US_TO_TICK(us) ((uint16_t)(((float)(us) / 20000.0) * 4096))
 
-// Lama masing-masing hip maju/mundur satu per satu
+// ============================================================
+// GRIPPER SETTING
+// ============================================================
+// Dari kode lama:
+// capit.write(50) = capit / close
+// capit.write(0)  = open
+#define GRIPPER_PIN 18
+#define GRIPPER_OPEN_ANGLE 0
+#define GRIPPER_CLOSE_ANGLE 50
+
+// Sensor ultrasonic
+#define TRIG_PIN 5
+#define ECHO_PIN 19
+
+// Sensor warna TCS3200
+#define S0 27
+#define S1 14
+#define S2 25
+#define S3 33
+#define SENSOR_OUT 26
+
+// Kalibrasi warna dari kode lama
+int redMin   = 15,  greenMin  = 18,  blueMin  = 12;
+int redMax   = 200, greenMax  = 210, blueMax  = 190;
+
+// Jarak deteksi
+#define DETECT_DISTANCE_CM 15.0
+#define GRIP_DISTANCE_CM   5.0
+
+// Auto approach
+#define SENSOR_INTERVAL_MS 300
+#define AUTO_APPROACH_GAP_MS 500
+#define MAX_AUTO_APPROACH_CYCLES 6
+
+// ============================================================
+// SETTING WAKTU KAKI
+// ============================================================
 #define TIME_HIP_PREPARE_SINGLE_MS 500
-
-// Lama push dua hip / semua hip
 #define TIME_HIP_PUSH_PAIR_MS      500
 #define TIME_HIP_PUSH_ALL_MS       500
 
-// Jeda antar gerakan
 #define TIME_JEDA_MS              200
 #define TIME_AUTO_GAP_MS          300
 
-// Ramp agar gerakan tidak menghentak
 #define USE_RAMP                  true
 #define RAMP_STEPS                10
 #define RAMP_DELAY_MS             30
 
 // ============================================================
-// CHANNEL MAPPING
-// ============================================================
-//
-// CH0 = HIP  Belakang Kiri
-// CH1 = KNEE Belakang Kiri
-//
-// CH2 = HIP  Depan Kiri
-// CH3 = KNEE Depan Kiri
-//
-// CH4 = HIP  Depan Kanan
-// CH5 = KNEE Depan Kanan
-//
-// CH6 = HIP  Belakang Kanan
-// CH7 = KNEE Belakang Kanan
-//
-// Mode ini hanya menggerakkan HIP.
-// KNEE tidak digerakkan.
-// ============================================================
-
-
-// ============================================================
 // PWM TUNING - HIP ONLY
-//
+// ============================================================
 // STOP / NETRAL = 1375
 //
 // MAJU:
@@ -66,44 +91,264 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 //
 // MUNDUR:
 // Kebalikan dari maju.
-// KIRI  prepare = besar, push = kecil
-// KANAN prepare = kecil, push = besar
 // ============================================================
 
-// ----------------------
 // DEPAN KIRI
-// ----------------------
 #define FL_HIP_CH          2
 #define FL_HIP_STOP_US     1375
 #define FL_HIP_PREPARE_US  1030
 #define FL_HIP_PUSH_US     1640
 
-// ----------------------
 // BELAKANG KIRI
-// ----------------------
 #define BL_HIP_CH          0
 #define BL_HIP_STOP_US     1375
 #define BL_HIP_PREPARE_US  1050
 #define BL_HIP_PUSH_US     1675
 
-// ----------------------
 // DEPAN KANAN
-// ----------------------
 #define FR_HIP_CH          4
 #define FR_HIP_STOP_US     1375
 #define FR_HIP_PREPARE_US  1680
 #define FR_HIP_PUSH_US     1030
 
-// ----------------------
 // BELAKANG KANAN
-// ----------------------
 #define BR_HIP_CH          6
 #define BR_HIP_STOP_US     1375
 #define BR_HIP_PREPARE_US  1680
 #define BR_HIP_PUSH_US     1060
 
 // ============================================================
-// BASIC SERVO CONTROL
+// STATE
+// ============================================================
+bool requestMaju = false;
+bool requestKanan = false;
+bool requestKiri = false;
+bool requestMundur = false;
+bool requestStop = false;
+
+bool movementBusy = false;
+bool emergencyStop = false;
+
+bool autoGripperEnabled = false;
+
+float jarak = 999;
+int red = 0, green = 0, blue = 0;
+int rNorm = 0, gNorm = 0, bNorm = 0;
+bool warnaMerah = false;
+
+unsigned long lastSensorRead = 0;
+unsigned long lastAutoApproach = 0;
+int autoApproachCycles = 0;
+
+enum AutoGripState {
+  GRIPPER_CLOSED_IDLE,
+  GRIPPER_OPEN_APPROACH,
+  GRIPPER_OBJECT_GRIPPED
+};
+
+AutoGripState gripState = GRIPPER_CLOSED_IDLE;
+
+// ============================================================
+// FORWARD DECLARATION
+// ============================================================
+void stopAllHip();
+void stopAllServo();
+bool majuOtomatisDepanDulu();
+bool belokKanan();
+bool belokKiri();
+bool mundurOtomatis();
+void openGripper();
+void closeGripper();
+void updateStatus(const char* msg);
+bool smartDelay(unsigned long ms);
+
+// ============================================================
+// BLYNK CONTROL
+// ============================================================
+
+BLYNK_WRITE(V0) {
+  int tombol = param.asInt();
+
+  if (tombol == 1) {
+    closeGripper();
+    gripState = GRIPPER_CLOSED_IDLE;
+    updateStatus("Gripper manual: CLOSE");
+  } else {
+    openGripper();
+    gripState = GRIPPER_OPEN_APPROACH;
+    updateStatus("Gripper manual: OPEN");
+  }
+}
+
+BLYNK_WRITE(V1) {
+  if (param.asInt() == 1) requestMaju = true;
+}
+
+BLYNK_WRITE(V2) {
+  if (param.asInt() == 1) requestKanan = true;
+}
+
+BLYNK_WRITE(V3) {
+  if (param.asInt() == 1) requestKiri = true;
+}
+
+BLYNK_WRITE(V4) {
+  if (param.asInt() == 1) requestMundur = true;
+}
+
+BLYNK_WRITE(V5) {
+  if (param.asInt() == 1) {
+    requestStop = true;
+    emergencyStop = true;
+  }
+}
+
+BLYNK_WRITE(V6) {
+  autoGripperEnabled = param.asInt();
+
+  if (autoGripperEnabled) {
+    closeGripper();
+    gripState = GRIPPER_CLOSED_IDLE;
+    autoApproachCycles = 0;
+    updateStatus("Auto gripper ON: gripper closed, ready detect");
+  } else {
+    updateStatus("Auto gripper OFF");
+  }
+}
+
+// ============================================================
+// SMART DELAY
+// Supaya Blynk tetap hidup saat robot bergerak.
+// ============================================================
+bool smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+
+  while (millis() - start < ms) {
+    Blynk.run();
+
+    if (emergencyStop || requestStop) {
+      stopAllHip();
+      updateStatus("Emergency stop during movement");
+      return false;
+    }
+
+    delay(5);
+  }
+
+  return true;
+}
+
+void updateStatus(const char* msg) {
+  Serial.println(msg);
+  Blynk.virtualWrite(V7, msg);
+}
+
+// ============================================================
+// GRIPPER CONTROL
+// ============================================================
+void openGripper() {
+  capit.write(GRIPPER_OPEN_ANGLE);
+  Blynk.virtualWrite(V0, 0);
+  Serial.println("[GRIPPER] OPEN");
+}
+
+void closeGripper() {
+  capit.write(GRIPPER_CLOSE_ANGLE);
+  Blynk.virtualWrite(V0, 1);
+  Serial.println("[GRIPPER] CLOSE");
+}
+
+// ============================================================
+// SENSOR WARNA
+// ============================================================
+int bacaSampel(int s2State, int s3State, int jumlahSampel = 5) {
+  digitalWrite(S2, s2State);
+  digitalWrite(S3, s3State);
+  delay(10);
+
+  long total = 0;
+  int valid = 0;
+
+  for (int i = 0; i < jumlahSampel; i++) {
+    long val = pulseIn(SENSOR_OUT, LOW, 50000);
+
+    if (val > 0) {
+      total += val;
+      valid++;
+    }
+
+    delay(5);
+  }
+
+  return (valid > 0) ? (total / valid) : 999;
+}
+
+int normalisasi(int nilai, int minVal, int maxVal) {
+  nilai = constrain(nilai, minVal, maxVal);
+  return map(nilai, minVal, maxVal, 255, 0);
+}
+
+void bacaUltrasonik() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long durasi = pulseIn(ECHO_PIN, HIGH, 30000);
+
+  if (durasi <= 0) {
+    jarak = 999;
+  } else {
+    jarak = durasi * 0.034 / 2;
+  }
+}
+
+void bacaWarna() {
+  red   = bacaSampel(LOW, LOW);
+  green = bacaSampel(HIGH, HIGH);
+  blue  = bacaSampel(LOW, HIGH);
+
+  rNorm = normalisasi(red, redMin, redMax);
+  gNorm = normalisasi(green, greenMin, greenMax);
+  bNorm = normalisasi(blue, blueMin, blueMax);
+
+  int selisihRG = rNorm - gNorm;
+  int selisihRB = rNorm - bNorm;
+
+  warnaMerah = false;
+
+  if (rNorm > 120 && selisihRG > 40 && selisihRB > 40) {
+    warnaMerah = true;
+  }
+}
+
+void bacaSensorTarget() {
+  bacaUltrasonik();
+  bacaWarna();
+
+  Serial.print("[SENSOR] Jarak=");
+  Serial.print(jarak);
+  Serial.print(" cm | R=");
+  Serial.print(rNorm);
+  Serial.print(" G=");
+  Serial.print(gNorm);
+  Serial.print(" B=");
+  Serial.print(bNorm);
+  Serial.print(" | Merah=");
+  Serial.println(warnaMerah ? "YA" : "TIDAK");
+}
+
+bool objekTerdeteksiAwal() {
+  return warnaMerah && jarak > 0 && jarak <= DETECT_DISTANCE_CM;
+}
+
+bool objekSiapDicengkeram() {
+  return warnaMerah && jarak > 0 && jarak <= GRIP_DISTANCE_CM;
+}
+
+// ============================================================
+// PCA / HIP CONTROL
 // ============================================================
 void setServoUS(uint8_t ch, uint16_t pulseUS) {
   if (ch >= SERVO_COUNT) return;
@@ -124,48 +369,53 @@ void stopAllServo() {
     setServoUS(i, DEFAULT_STOP_US);
   }
 
-  Serial.println("[STOP] Semua servo stop.");
+  Serial.println("[STOP] Semua servo PCA stop.");
 }
 
 // ============================================================
 // RAMP HELPER
 // ============================================================
-void rampOneHipToTarget(uint8_t ch, uint16_t stopUS, uint16_t targetUS) {
+bool rampOneHipToTarget(uint8_t ch, uint16_t stopUS, uint16_t targetUS) {
   if (!USE_RAMP) {
     setServoUS(ch, targetUS);
-    return;
+    return true;
   }
 
   for (int step = 1; step <= RAMP_STEPS; step++) {
     uint16_t value = stopUS + (((int16_t)targetUS - (int16_t)stopUS) * step) / RAMP_STEPS;
     setServoUS(ch, value);
-    delay(RAMP_DELAY_MS);
+
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
+
+  return true;
 }
 
-void rampOneHipToStop(uint8_t ch, uint16_t stopUS, uint16_t fromUS) {
+bool rampOneHipToStop(uint8_t ch, uint16_t stopUS, uint16_t fromUS) {
   if (!USE_RAMP) {
     setServoUS(ch, stopUS);
-    return;
+    return true;
   }
 
   for (int step = RAMP_STEPS; step >= 1; step--) {
     uint16_t value = stopUS + (((int16_t)fromUS - (int16_t)stopUS) * step) / RAMP_STEPS;
     setServoUS(ch, value);
-    delay(RAMP_DELAY_MS);
+
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
 
   setServoUS(ch, stopUS);
+  return true;
 }
 
-void rampTwoHipToTarget(
+bool rampTwoHipToTarget(
   uint8_t chA, uint16_t stopA, uint16_t targetA,
   uint8_t chB, uint16_t stopB, uint16_t targetB
 ) {
   if (!USE_RAMP) {
     setServoUS(chA, targetA);
     setServoUS(chB, targetB);
-    return;
+    return true;
   }
 
   for (int step = 1; step <= RAMP_STEPS; step++) {
@@ -175,18 +425,20 @@ void rampTwoHipToTarget(
     setServoUS(chA, valueA);
     setServoUS(chB, valueB);
 
-    delay(RAMP_DELAY_MS);
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
+
+  return true;
 }
 
-void rampTwoHipToStop(
+bool rampTwoHipToStop(
   uint8_t chA, uint16_t stopA, uint16_t fromA,
   uint8_t chB, uint16_t stopB, uint16_t fromB
 ) {
   if (!USE_RAMP) {
     setServoUS(chA, stopA);
     setServoUS(chB, stopB);
-    return;
+    return true;
   }
 
   for (int step = RAMP_STEPS; step >= 1; step--) {
@@ -196,14 +448,16 @@ void rampTwoHipToStop(
     setServoUS(chA, valueA);
     setServoUS(chB, valueB);
 
-    delay(RAMP_DELAY_MS);
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
 
   setServoUS(chA, stopA);
   setServoUS(chB, stopB);
+
+  return true;
 }
 
-void rampAllHipToTarget(
+bool rampAllHipToTarget(
   uint16_t targetFL,
   uint16_t targetBL,
   uint16_t targetFR,
@@ -214,7 +468,7 @@ void rampAllHipToTarget(
     setServoUS(BL_HIP_CH, targetBL);
     setServoUS(FR_HIP_CH, targetFR);
     setServoUS(BR_HIP_CH, targetBR);
-    return;
+    return true;
   }
 
   for (int step = 1; step <= RAMP_STEPS; step++) {
@@ -228,11 +482,13 @@ void rampAllHipToTarget(
     setServoUS(FR_HIP_CH, valueFR);
     setServoUS(BR_HIP_CH, valueBR);
 
-    delay(RAMP_DELAY_MS);
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
+
+  return true;
 }
 
-void rampAllHipToStop(
+bool rampAllHipToStop(
   uint16_t fromFL,
   uint16_t fromBL,
   uint16_t fromFR,
@@ -240,7 +496,7 @@ void rampAllHipToStop(
 ) {
   if (!USE_RAMP) {
     stopAllHip();
-    return;
+    return true;
   }
 
   for (int step = RAMP_STEPS; step >= 1; step--) {
@@ -254,36 +510,36 @@ void rampAllHipToStop(
     setServoUS(FR_HIP_CH, valueFR);
     setServoUS(BR_HIP_CH, valueBR);
 
-    delay(RAMP_DELAY_MS);
+    if (!smartDelay(RAMP_DELAY_MS)) return false;
   }
 
   stopAllHip();
+  return true;
 }
 
 // ============================================================
-// GERAK HIP SATU PER SATU
+// GERAK HIP
 // ============================================================
-void hipSingleMove(const char* nama, uint8_t ch, uint16_t stopUS, uint16_t targetUS, const char* mode) {
+bool hipSingleMove(const char* nama, uint8_t ch, uint16_t stopUS, uint16_t targetUS, const char* mode) {
   Serial.println();
   Serial.print("[HIP ");
   Serial.print(mode);
   Serial.print(" SINGLE] ");
   Serial.println(nama);
 
-  rampOneHipToTarget(ch, stopUS, targetUS);
-  delay(TIME_HIP_PREPARE_SINGLE_MS);
-  rampOneHipToStop(ch, stopUS, targetUS);
+  if (!rampOneHipToTarget(ch, stopUS, targetUS)) return false;
+  if (!smartDelay(TIME_HIP_PREPARE_SINGLE_MS)) return false;
+  if (!rampOneHipToStop(ch, stopUS, targetUS)) return false;
 
   Serial.print("[DONE] ");
   Serial.print(nama);
   Serial.print(" selesai ");
   Serial.println(mode);
+
+  return true;
 }
 
-// ============================================================
-// PUSH DUA HIP BERSAMAAN
-// ============================================================
-void hipPushPair(
+bool hipPushPair(
   const char* namaSisi,
   uint8_t chA, uint16_t stopA, uint16_t pushA,
   uint8_t chB, uint16_t stopB, uint16_t pushB
@@ -292,355 +548,373 @@ void hipPushPair(
   Serial.print("[HIP PUSH PAIR] ");
   Serial.println(namaSisi);
 
-  rampTwoHipToTarget(chA, stopA, pushA, chB, stopB, pushB);
-  delay(TIME_HIP_PUSH_PAIR_MS);
-  rampTwoHipToStop(chA, stopA, pushA, chB, stopB, pushB);
+  if (!rampTwoHipToTarget(chA, stopA, pushA, chB, stopB, pushB)) return false;
+  if (!smartDelay(TIME_HIP_PUSH_PAIR_MS)) return false;
+  if (!rampTwoHipToStop(chA, stopA, pushA, chB, stopB, pushB)) return false;
 
   Serial.print("[DONE] Push ");
   Serial.print(namaSisi);
   Serial.println(" selesai.");
+
+  return true;
 }
 
 // ============================================================
-// COMMAND MANUAL MAJU - SISI KIRI
+// COMMAND KAKI
 // ============================================================
-
-// 1 = depan kiri maju
-void command1_DepanKiriMaju() {
-  hipSingleMove(
-    "Depan Kiri",
-    FL_HIP_CH,
-    FL_HIP_STOP_US,
-    FL_HIP_PREPARE_US,
-    "MAJU"
-  );
+bool command1_DepanKiriMaju() {
+  return hipSingleMove("Depan Kiri", FL_HIP_CH, FL_HIP_STOP_US, FL_HIP_PREPARE_US, "MAJU");
 }
 
-// 2 = belakang kiri maju
-void command2_BelakangKiriMaju() {
-  hipSingleMove(
-    "Belakang Kiri",
-    BL_HIP_CH,
-    BL_HIP_STOP_US,
-    BL_HIP_PREPARE_US,
-    "MAJU"
-  );
+bool command2_BelakangKiriMaju() {
+  return hipSingleMove("Belakang Kiri", BL_HIP_CH, BL_HIP_STOP_US, BL_HIP_PREPARE_US, "MAJU");
 }
 
-// 3 = push kiri untuk maju
-void command3_PushKiriMaju() {
-  hipPushPair(
+bool command3_PushKiriMaju() {
+  return hipPushPair(
     "Kiri MAJU: Depan Kiri + Belakang Kiri",
-    FL_HIP_CH,
-    FL_HIP_STOP_US,
-    FL_HIP_PUSH_US,
-    BL_HIP_CH,
-    BL_HIP_STOP_US,
-    BL_HIP_PUSH_US
+    FL_HIP_CH, FL_HIP_STOP_US, FL_HIP_PUSH_US,
+    BL_HIP_CH, BL_HIP_STOP_US, BL_HIP_PUSH_US
   );
 }
 
-// ============================================================
-// COMMAND MANUAL MAJU - SISI KANAN
-// ============================================================
-
-// 4 = depan kanan maju
-void command4_DepanKananMaju() {
-  hipSingleMove(
-    "Depan Kanan",
-    FR_HIP_CH,
-    FR_HIP_STOP_US,
-    FR_HIP_PREPARE_US,
-    "MAJU"
-  );
+bool command4_DepanKananMaju() {
+  return hipSingleMove("Depan Kanan", FR_HIP_CH, FR_HIP_STOP_US, FR_HIP_PREPARE_US, "MAJU");
 }
 
-// 5 = belakang kanan maju
-void command5_BelakangKananMaju() {
-  hipSingleMove(
-    "Belakang Kanan",
-    BR_HIP_CH,
-    BR_HIP_STOP_US,
-    BR_HIP_PREPARE_US,
-    "MAJU"
-  );
+bool command5_BelakangKananMaju() {
+  return hipSingleMove("Belakang Kanan", BR_HIP_CH, BR_HIP_STOP_US, BR_HIP_PREPARE_US, "MAJU");
 }
 
-// 6 = push kanan untuk maju
-void command6_PushKananMaju() {
-  hipPushPair(
+bool command6_PushKananMaju() {
+  return hipPushPair(
     "Kanan MAJU: Depan Kanan + Belakang Kanan",
-    FR_HIP_CH,
-    FR_HIP_STOP_US,
-    FR_HIP_PUSH_US,
-    BR_HIP_CH,
-    BR_HIP_STOP_US,
-    BR_HIP_PUSH_US
+    FR_HIP_CH, FR_HIP_STOP_US, FR_HIP_PUSH_US,
+    BR_HIP_CH, BR_HIP_STOP_US, BR_HIP_PUSH_US
   );
 }
 
-// ============================================================
-// PUSH SEMUA MAJU
-// ============================================================
-void command7_PushSemuaMaju() {
+bool command7_PushSemuaMaju() {
   Serial.println();
   Serial.println("======================================");
   Serial.println("7 = PUSH SEMUA HIP UNTUK MAJU");
   Serial.println("======================================");
 
-  rampAllHipToTarget(
-    FL_HIP_PUSH_US,
-    BL_HIP_PUSH_US,
-    FR_HIP_PUSH_US,
-    BR_HIP_PUSH_US
-  );
-
-  delay(TIME_HIP_PUSH_ALL_MS);
-
-  rampAllHipToStop(
-    FL_HIP_PUSH_US,
-    BL_HIP_PUSH_US,
-    FR_HIP_PUSH_US,
-    BR_HIP_PUSH_US
-  );
+  if (!rampAllHipToTarget(FL_HIP_PUSH_US, BL_HIP_PUSH_US, FR_HIP_PUSH_US, BR_HIP_PUSH_US)) return false;
+  if (!smartDelay(TIME_HIP_PUSH_ALL_MS)) return false;
+  if (!rampAllHipToStop(FL_HIP_PUSH_US, BL_HIP_PUSH_US, FR_HIP_PUSH_US, BR_HIP_PUSH_US)) return false;
 
   Serial.println("[DONE] Push semua maju selesai.");
+  return true;
 }
 
-// ============================================================
-// PUSH SEMUA MUNDUR
-// Kebalikan dari push maju:
-// target push mundur = prepare maju
-// ============================================================
-void command8_PushSemuaMundur() {
+bool command8_PushSemuaMundur() {
   Serial.println();
   Serial.println("======================================");
   Serial.println("8 = PUSH SEMUA HIP UNTUK MUNDUR");
   Serial.println("======================================");
 
-  rampAllHipToTarget(
-    FL_HIP_PREPARE_US,
-    BL_HIP_PREPARE_US,
-    FR_HIP_PREPARE_US,
-    BR_HIP_PREPARE_US
-  );
-
-  delay(TIME_HIP_PUSH_ALL_MS);
-
-  rampAllHipToStop(
-    FL_HIP_PREPARE_US,
-    BL_HIP_PREPARE_US,
-    FR_HIP_PREPARE_US,
-    BR_HIP_PREPARE_US
-  );
+  if (!rampAllHipToTarget(FL_HIP_PREPARE_US, BL_HIP_PREPARE_US, FR_HIP_PREPARE_US, BR_HIP_PREPARE_US)) return false;
+  if (!smartDelay(TIME_HIP_PUSH_ALL_MS)) return false;
+  if (!rampAllHipToStop(FL_HIP_PREPARE_US, BL_HIP_PREPARE_US, FR_HIP_PREPARE_US, BR_HIP_PREPARE_US)) return false;
 
   Serial.println("[DONE] Push semua mundur selesai.");
+  return true;
 }
 
 // ============================================================
-// GERAK MUNDUR PER KAKI
-// Kebalikan dari prepare maju:
-// target mundur = push maju
+// GERAK OTOMATIS
 // ============================================================
-void depanKiriMundur() {
-  hipSingleMove("Depan Kiri", FL_HIP_CH, FL_HIP_STOP_US, FL_HIP_PUSH_US, "MUNDUR");
+bool belokKanan() {
+  updateStatus("Belok kanan");
+  if (!command1_DepanKiriMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+  if (!command2_BelakangKiriMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+  if (!command3_PushKiriMaju()) return false;
+  return true;
 }
 
-void belakangKiriMundur() {
-  hipSingleMove("Belakang Kiri", BL_HIP_CH, BL_HIP_STOP_US, BL_HIP_PUSH_US, "MUNDUR");
+bool belokKiri() {
+  updateStatus("Belok kiri");
+  if (!command4_DepanKananMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+  if (!command5_BelakangKananMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+  if (!command6_PushKananMaju()) return false;
+  return true;
 }
 
-void depanKananMundur() {
-  hipSingleMove("Depan Kanan", FR_HIP_CH, FR_HIP_STOP_US, FR_HIP_PUSH_US, "MUNDUR");
+bool majuOtomatisDepanDulu() {
+  updateStatus("Maju otomatis: depan dulu");
+
+  if (!command1_DepanKiriMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+
+  if (!command4_DepanKananMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+
+  if (!command2_BelakangKiriMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+
+  if (!command5_BelakangKananMaju()) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
+
+  if (!command7_PushSemuaMaju()) return false;
+
+  updateStatus("Maju selesai");
+  return true;
 }
 
-void belakangKananMundur() {
-  hipSingleMove("Belakang Kanan", BR_HIP_CH, BR_HIP_STOP_US, BR_HIP_PUSH_US, "MUNDUR");
-}
+bool mundurOtomatis() {
+  updateStatus("Mundur otomatis");
 
-// ============================================================
-// BELOK KANAN
-//
-// Ketentuan:
-// kaki kiri depan maju
-// kaki kiri belakang maju
-// push kiri
-// ============================================================
-void belokKanan() {
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("BELOK KANAN");
-  Serial.println("Urutan: Depan kiri -> Belakang kiri -> Push kiri");
-  Serial.println("======================================");
+  if (!hipSingleMove("Belakang Kanan", BR_HIP_CH, BR_HIP_STOP_US, BR_HIP_PUSH_US, "MUNDUR")) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
 
-  command1_DepanKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  if (!hipSingleMove("Belakang Kiri", BL_HIP_CH, BL_HIP_STOP_US, BL_HIP_PUSH_US, "MUNDUR")) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
 
-  command2_BelakangKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  if (!hipSingleMove("Depan Kanan", FR_HIP_CH, FR_HIP_STOP_US, FR_HIP_PUSH_US, "MUNDUR")) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
 
-  command3_PushKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  if (!hipSingleMove("Depan Kiri", FL_HIP_CH, FL_HIP_STOP_US, FL_HIP_PUSH_US, "MUNDUR")) return false;
+  if (!smartDelay(TIME_AUTO_GAP_MS)) return false;
 
-  Serial.println("[DONE] Belok kanan selesai.");
-}
+  if (!command8_PushSemuaMundur()) return false;
 
-// ============================================================
-// BELOK KIRI
-//
-// Ketentuan:
-// kaki kanan depan maju
-// kaki kanan belakang maju
-// push kanan
-// ============================================================
-void belokKiri() {
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("BELOK KIRI");
-  Serial.println("Urutan: Depan kanan -> Belakang kanan -> Push kanan");
-  Serial.println("======================================");
-
-  command4_DepanKananMaju();
-  delay(TIME_AUTO_GAP_MS);
-
-  command5_BelakangKananMaju();
-  delay(TIME_AUTO_GAP_MS);
-
-  command6_PushKananMaju();
-  delay(TIME_AUTO_GAP_MS);
-
-  Serial.println("[DONE] Belok kiri selesai.");
+  updateStatus("Mundur selesai");
+  return true;
 }
 
 // ============================================================
-// MAJU OTOMATIS VERSI DEPAN DULU
-//
-// Ketentuan:
-// kiri depan -> kanan depan -> kiri belakang -> kanan belakang -> push semua
+// RUN MOVEMENT WRAPPER
 // ============================================================
-void majuOtomatisDepanDulu() {
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("MAJU OTOMATIS - DEPAN DULU");
-  Serial.println("Urutan: FL -> FR -> BL -> BR -> Push semua");
-  Serial.println("======================================");
+void runMovement(bool (*movementFunc)(), const char* namaGerak) {
+  if (movementBusy) return;
 
-  command1_DepanKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  emergencyStop = false;
+  requestStop = false;
+  movementBusy = true;
 
-  command4_DepanKananMaju();
-  delay(TIME_AUTO_GAP_MS);
+  updateStatus(namaGerak);
 
-  command2_BelakangKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  bool sukses = movementFunc();
 
-  command5_BelakangKananMaju();
-  delay(TIME_AUTO_GAP_MS);
+  stopAllHip();
 
-  command7_PushSemuaMaju();
-  delay(TIME_AUTO_GAP_MS);
+  movementBusy = false;
 
-  Serial.println("[DONE] Maju otomatis depan dulu selesai.");
+  if (sukses) {
+    updateStatus("Gerak selesai");
+  } else {
+    updateStatus("Gerak dihentikan");
+  }
 }
 
 // ============================================================
-// MAJU OTOMATIS VERSI BELAKANG DULU
-//
-// Pendapatku: ini layak dites karena kaki belakang
-// biasanya lebih berperan sebagai pendorong.
+// AUTO GRIPPER STATE MACHINE
 // ============================================================
-void majuOtomatisBelakangDulu() {
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("MAJU OTOMATIS - BELAKANG DULU");
-  Serial.println("Urutan: BL -> BR -> FL -> FR -> Push semua");
-  Serial.println("======================================");
+void handleAutoGripper() {
+  if (!autoGripperEnabled) return;
+  if (movementBusy) return;
 
-  command2_BelakangKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+  if (millis() - lastSensorRead >= SENSOR_INTERVAL_MS) {
+    bacaSensorTarget();
+    lastSensorRead = millis();
+  }
 
-  command5_BelakangKananMaju();
-  delay(TIME_AUTO_GAP_MS);
+  switch (gripState) {
+    case GRIPPER_CLOSED_IDLE:
+      // State awal: gripper harus tertutup.
+      closeGripper();
 
-  command1_DepanKiriMaju();
-  delay(TIME_AUTO_GAP_MS);
+      if (objekTerdeteksiAwal()) {
+        stopAllHip();
+        openGripper();
 
-  command4_DepanKananMaju();
-  delay(TIME_AUTO_GAP_MS);
+        gripState = GRIPPER_OPEN_APPROACH;
+        autoApproachCycles = 0;
+        lastAutoApproach = millis();
 
-  command7_PushSemuaMaju();
-  delay(TIME_AUTO_GAP_MS);
+        updateStatus("Objek merah terdeteksi: gripper open");
+      }
+      break;
 
-  Serial.println("[DONE] Maju otomatis belakang dulu selesai.");
+    case GRIPPER_OPEN_APPROACH:
+      // Gripper tetap terbuka, robot maju sedikit demi sedikit.
+      if (objekSiapDicengkeram()) {
+        stopAllHip();
+        closeGripper();
+
+        gripState = GRIPPER_OBJECT_GRIPPED;
+        autoGripperEnabled = false;
+        Blynk.virtualWrite(V6, 0);
+
+        updateStatus("Objek masuk gripper: CLOSE / GRIP");
+        break;
+      }
+
+      if (autoApproachCycles >= MAX_AUTO_APPROACH_CYCLES) {
+        stopAllHip();
+        updateStatus("Auto approach max. Cek posisi objek.");
+        break;
+      }
+
+      if (millis() - lastAutoApproach >= AUTO_APPROACH_GAP_MS) {
+        updateStatus("Approach maju dengan gripper open");
+
+        movementBusy = true;
+        emergencyStop = false;
+        requestStop = false;
+
+        bool sukses = majuOtomatisDepanDulu();
+
+        stopAllHip();
+        movementBusy = false;
+
+        autoApproachCycles++;
+        lastAutoApproach = millis();
+
+        if (!sukses) {
+          updateStatus("Approach dihentikan");
+        }
+      }
+      break;
+
+    case GRIPPER_OBJECT_GRIPPED:
+      // Objek sudah dicapit.
+      stopAllHip();
+      break;
+  }
 }
 
 // ============================================================
-// MUNDUR OTOMATIS
-//
-// Kebalikan dari maju depan-dulu.
-// Maju depan-dulu: FL -> FR -> BL -> BR -> push maju
-// Mundur reverse : BR -> BL -> FR -> FL -> push mundur
+// HANDLE COMMAND BLYNK
 // ============================================================
-void mundurOtomatis() {
-  Serial.println();
-  Serial.println("======================================");
-  Serial.println("MUNDUR OTOMATIS");
-  Serial.println("Urutan: BR -> BL -> FR -> FL -> Push semua mundur");
-  Serial.println("======================================");
+void handleBlynkRequests() {
+  if (requestStop) {
+    requestStop = false;
+    emergencyStop = true;
+    stopAllHip();
+    updateStatus("STOP dari Blynk");
+    return;
+  }
 
-  belakangKananMundur();
-  delay(TIME_AUTO_GAP_MS);
+  if (movementBusy) return;
 
-  belakangKiriMundur();
-  delay(TIME_AUTO_GAP_MS);
+  if (requestMaju) {
+    requestMaju = false;
+    runMovement(majuOtomatisDepanDulu, "Blynk: Maju");
+  }
 
-  depanKananMundur();
-  delay(TIME_AUTO_GAP_MS);
+  if (requestKanan) {
+    requestKanan = false;
+    runMovement(belokKanan, "Blynk: Belok kanan");
+  }
 
-  depanKiriMundur();
-  delay(TIME_AUTO_GAP_MS);
+  if (requestKiri) {
+    requestKiri = false;
+    runMovement(belokKiri, "Blynk: Belok kiri");
+  }
 
-  command8_PushSemuaMundur();
-  delay(TIME_AUTO_GAP_MS);
-
-  Serial.println("[DONE] Mundur otomatis selesai.");
+  if (requestMundur) {
+    requestMundur = false;
+    runMovement(mundurOtomatis, "Blynk: Mundur");
+  }
 }
 
 // ============================================================
-// HELP
+// SERIAL COMMAND
 // ============================================================
+void handleSerialCommand() {
+  if (!Serial.available()) return;
+
+  char cmd = Serial.read();
+  cmd = tolower(cmd);
+
+  switch (cmd) {
+    case 'm':
+      runMovement(majuOtomatisDepanDulu, "Serial: Maju");
+      break;
+
+    case 'r':
+      runMovement(belokKanan, "Serial: Belok kanan");
+      break;
+
+    case 't':
+      runMovement(belokKiri, "Serial: Belok kiri");
+      break;
+
+    case 'b':
+      runMovement(mundurOtomatis, "Serial: Mundur");
+      break;
+
+    case 'o':
+      openGripper();
+      updateStatus("Serial: Gripper open");
+      break;
+
+    case 'c':
+      closeGripper();
+      updateStatus("Serial: Gripper close");
+      break;
+
+    case 's':
+      bacaSensorTarget();
+      break;
+
+    case 'x':
+      stopAllHip();
+      updateStatus("Serial: Stop hip");
+      break;
+
+    case 'l':
+      emergencyStop = true;
+      stopAllServo();
+      updateStatus("Serial: Stop all PCA");
+      break;
+
+    case 'h':
+      printHelp();
+      break;
+
+    case '\n':
+    case '\r':
+    case ' ':
+      break;
+
+    default:
+      Serial.print("[!] Command tidak dikenal: ");
+      Serial.println(cmd);
+      break;
+  }
+}
+
 void printHelp() {
   Serial.println();
-  Serial.println("===== MODE HIP ONLY FULL BUILD =====");
-  Serial.println("Knee tidak digerakkan di mode ini.");
+  Serial.println("===== ROBOT KAKI + GRIPPER + BLYNK =====");
+  Serial.println("Serial:");
+  Serial.println("m = maju");
+  Serial.println("r = belok kanan");
+  Serial.println("t = belok kiri");
+  Serial.println("b = mundur");
+  Serial.println("o = gripper open");
+  Serial.println("c = gripper close");
+  Serial.println("s = baca sensor");
+  Serial.println("x = stop hip");
+  Serial.println("l = stop all PCA");
   Serial.println();
-  Serial.println("Manual maju:");
-  Serial.println("1 = hip depan kiri maju");
-  Serial.println("2 = hip belakang kiri maju");
-  Serial.println("3 = push kiri maju");
-  Serial.println("4 = hip depan kanan maju");
-  Serial.println("5 = hip belakang kanan maju");
-  Serial.println("6 = push kanan maju");
-  Serial.println("7 = push semua maju");
-  Serial.println("8 = push semua mundur");
-  Serial.println();
-  Serial.println("Otomatis:");
-  Serial.println("r = belok kanan: FL -> BL -> push kiri");
-  Serial.println("t = belok kiri : FR -> BR -> push kanan");
-  Serial.println("m = maju otomatis depan dulu: FL -> FR -> BL -> BR -> push semua");
-  Serial.println("n = maju otomatis belakang dulu: BL -> BR -> FL -> FR -> push semua");
-  Serial.println("b = mundur otomatis kebalikan maju");
-  Serial.println();
-  Serial.println("x = stop semua hip");
-  Serial.println("l = stop semua servo");
-  Serial.println("h = help");
-  Serial.println();
-  Serial.println("PWM tuning:");
-  Serial.println("MAJU kiri: prepare kecil, push besar");
-  Serial.println("MAJU kanan: prepare besar, push kecil");
-  Serial.println("MUNDUR = kebalikan dari maju");
-  Serial.println("Netral = 1375");
-  Serial.println("=====================================");
+  Serial.println("Blynk:");
+  Serial.println("V0 = gripper manual");
+  Serial.println("V1 = maju");
+  Serial.println("V2 = belok kanan");
+  Serial.println("V3 = belok kiri");
+  Serial.println("V4 = mundur");
+  Serial.println("V5 = stop");
+  Serial.println("V6 = auto gripper");
+  Serial.println("V7 = status");
+  Serial.println("========================================");
   Serial.println();
 }
 
@@ -648,7 +922,7 @@ void printHelp() {
 // SETUP
 // ============================================================
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(1000);
 
   Wire.begin(21, 22);
@@ -660,10 +934,32 @@ void setup() {
 
   stopAllServo();
 
-  Serial.println();
-  Serial.println("[BOOT] ESP32 + PCA9685 siap.");
-  Serial.println("[BOOT] Mode hip-only full build aktif.");
+  capit.attach(GRIPPER_PIN);
+  closeGripper();
 
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(S0, OUTPUT);
+  pinMode(S1, OUTPUT);
+  pinMode(S2, OUTPUT);
+  pinMode(S3, OUTPUT);
+  pinMode(SENSOR_OUT, INPUT);
+
+  // Frequency scaling TCS3200 20%
+  digitalWrite(S0, HIGH);
+  digitalWrite(S1, LOW);
+
+  Serial.println("[BOOT] Connecting Blynk...");
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  Blynk.virtualWrite(V0, 1);
+  Blynk.virtualWrite(V6, 0);
+  Blynk.virtualWrite(V7, "System ready. Gripper closed.");
+
+  gripState = GRIPPER_CLOSED_IDLE;
+
+  Serial.println("[BOOT] System ready.");
   printHelp();
 }
 
@@ -671,84 +967,9 @@ void setup() {
 // LOOP
 // ============================================================
 void loop() {
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
-    cmd = tolower(cmd);
+  Blynk.run();
 
-    switch (cmd) {
-      case '1':
-        command1_DepanKiriMaju();
-        break;
-
-      case '2':
-        command2_BelakangKiriMaju();
-        break;
-
-      case '3':
-        command3_PushKiriMaju();
-        break;
-
-      case '4':
-        command4_DepanKananMaju();
-        break;
-
-      case '5':
-        command5_BelakangKananMaju();
-        break;
-
-      case '6':
-        command6_PushKananMaju();
-        break;
-
-      case '7':
-        command7_PushSemuaMaju();
-        break;
-
-      case '8':
-        command8_PushSemuaMundur();
-        break;
-
-      case 'r':
-        belokKanan();
-        break;
-
-      case 't':
-        belokKiri();
-        break;
-
-      case 'm':
-        majuOtomatisDepanDulu();
-        break;
-
-      case 'n':
-        majuOtomatisBelakangDulu();
-        break;
-
-      case 'b':
-        mundurOtomatis();
-        break;
-
-      case 'x':
-        stopAllHip();
-        break;
-
-      case 'l':
-        stopAllServo();
-        break;
-
-      case 'h':
-        printHelp();
-        break;
-
-      case '\n':
-      case '\r':
-      case ' ':
-        break;
-
-      default:
-        Serial.print("[!] Command tidak dikenal: ");
-        Serial.println(cmd);
-        break;
-    }
-  }
+  handleSerialCommand();
+  handleBlynkRequests();
+  handleAutoGripper();
 }
