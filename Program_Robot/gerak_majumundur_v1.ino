@@ -27,6 +27,9 @@ Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(0x40);
 #define TIME_JEDA_NORMAL_MS 150
 #define TIME_JEDA_CEPAT_MS  30
 
+// Jeda antar command otomatis
+#define TIME_AUTO_STEP_GAP_MS 60
+
 // Gerakan maju cepat per satu kaki
 #define TIME_FOOT_UP_FAST_MS       120
 #define TIME_FOOT_DOWN_FAST_MS     90
@@ -112,7 +115,7 @@ LegConfig kaki[4] = {
     // Sisi kiri:
     // prepare maju = BALIK
     // push maju    = MAJU
-    1000, 1680 //HIP
+    990, 1675 // HIP DORONG
   },
 
   // ==========================================================
@@ -135,7 +138,7 @@ LegConfig kaki[4] = {
     // Sisi kiri:
     // prepare maju = BALIK
     // push maju    = MAJU
-    1050, 1645 //HIP
+    1030, 1640 // HIP DORONG
   },
 
   // ==========================================================
@@ -158,8 +161,7 @@ LegConfig kaki[4] = {
     // Sisi kanan:
     // prepare maju = MAJU
     // push maju    = BALIK
-    // Disamakan kekuatannya dengan sisi kiri
-    1680, 1030 //HIP
+    1680, 1030 // HIP
   },
 
   // ==========================================================
@@ -182,8 +184,7 @@ LegConfig kaki[4] = {
     // Sisi kanan:
     // prepare maju = MAJU
     // push maju    = BALIK
-    // Disamakan kekuatannya dengan sisi kiri
-    1680, 1060 //HIP
+    1680, 1060 // HIP
   }
 };
 
@@ -448,11 +449,136 @@ void pushSemuaKeBelakang() {
 }
 
 // ============================================================
+// MAJU OTOMATIS 1 SIKLUS
+//
+// Urutan manual yang sudah kamu pakai:
+// kiri  : 3 -> 1 -> 5
+// kanan : 4 -> 2 -> 6
+//
+// Maka otomatis:
+// 3 -> 1 -> 5 -> 4 -> 2 -> 6
+// ============================================================
+void majuOtomatisSatuSiklus() {
+  Serial.println();
+  Serial.println("======================================");
+  Serial.println("MAJU OTOMATIS 1 SIKLUS");
+  Serial.println("Urutan: 3 -> 1 -> 5 -> 4 -> 2 -> 6");
+  Serial.println("======================================");
+
+  // KIRI
+  Serial.println("[AUTO] 3 = Belakang kiri maju");
+  majuCepatSatuKaki(LEG_BL);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[AUTO] 1 = Depan kiri maju");
+  majuCepatSatuKaki(LEG_FL);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[AUTO] 5 = Push kiri");
+  pushKiriKeBelakang();
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  // KANAN
+  Serial.println("[AUTO] 4 = Belakang kanan maju");
+  majuCepatSatuKaki(LEG_BR);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[AUTO] 2 = Depan kanan maju");
+  majuCepatSatuKaki(LEG_FR);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[AUTO] 6 = Push kanan");
+  pushKananKeBelakang();
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[DONE] Maju otomatis 1 siklus selesai.");
+}
+
+// ============================================================
+// MAJU OTOMATIS DARI KONDISI AWAL
+//
+// Ini menjalankan:
+// q -> 3 -> 1 -> 5 -> 4 -> 2 -> 6
+// ============================================================
+void majuOtomatisDenganTahapAwal() {
+  Serial.println();
+  Serial.println("======================================");
+  Serial.println("MAJU OTOMATIS DENGAN TAHAP AWAL");
+  Serial.println("Urutan: q -> 3 -> 1 -> 5 -> 4 -> 2 -> 6");
+  Serial.println("======================================");
+
+  tahapAwalFootDownHold();
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  majuOtomatisSatuSiklus();
+
+  Serial.println("[DONE] Maju otomatis dengan tahap awal selesai.");
+}
+
+// ============================================================
+// BELOK KANAN
+//
+// Urutan:
+// 3 -> 1 -> 5
+// Belakang kiri -> Depan kiri -> Push kiri
+// ============================================================
+void belokKananOtomatis() {
+  Serial.println();
+  Serial.println("======================================");
+  Serial.println("BELOK KANAN OTOMATIS");
+  Serial.println("Urutan: 3 -> 1 -> 5");
+  Serial.println("======================================");
+
+  Serial.println("[TURN RIGHT] 3 = Belakang kiri maju");
+  majuCepatSatuKaki(LEG_BL);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[TURN RIGHT] 1 = Depan kiri maju");
+  majuCepatSatuKaki(LEG_FL);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[TURN RIGHT] 5 = Push kiri");
+  pushKiriKeBelakang();
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[DONE] Belok kanan selesai.");
+}
+
+// ============================================================
+// BELOK KIRI
+//
+// Urutan:
+// 4 -> 2 -> 6
+// Belakang kanan -> Depan kanan -> Push kanan
+// ============================================================
+void belokKiriOtomatis() {
+  Serial.println();
+  Serial.println("======================================");
+  Serial.println("BELOK KIRI OTOMATIS");
+  Serial.println("Urutan: 4 -> 2 -> 6");
+  Serial.println("======================================");
+
+  Serial.println("[TURN LEFT] 4 = Belakang kanan maju");
+  majuCepatSatuKaki(LEG_BR);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[TURN LEFT] 2 = Depan kanan maju");
+  majuCepatSatuKaki(LEG_FR);
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[TURN LEFT] 6 = Push kanan");
+  pushKananKeBelakang();
+  delay(TIME_AUTO_STEP_GAP_MS);
+
+  Serial.println("[DONE] Belok kiri selesai.");
+}
+
+// ============================================================
 // HELP
 // ============================================================
 void printHelp() {
   Serial.println();
-  Serial.println("===== MODE MANUAL: 4 KAKI MAJU + PUSH SISI FULL =====");
+  Serial.println("===== MODE MANUAL + OTOMATIS MAJU =====");
   Serial.println("q = tahap awal: semua FOOT_DOWN sejajar + HOLD");
   Serial.println();
   Serial.println("Kontrol maju cepat per kaki:");
@@ -462,16 +588,17 @@ void printHelp() {
   Serial.println("4 = Belakang kanan maju cepat");
   Serial.println();
   Serial.println("Kontrol push ke belakang per sisi:");
-  Serial.println("5 = Push sisi kiri  ke belakang (Depan kiri + Belakang kiri)");
-  Serial.println("6 = Push sisi kanan ke belakang (Depan kanan + Belakang kanan)");
+  Serial.println("5 = Push sisi kiri  ke belakang");
+  Serial.println("6 = Push sisi kanan ke belakang");
   Serial.println("7 = Push semua hip ke belakang");
+  Serial.println();
+  Serial.println("Otomatis:");
+  Serial.println("m = maju otomatis 1 siklus: 3 -> 1 -> 5 -> 4 -> 2 -> 6");
+  Serial.println("a = tahap awal + maju otomatis: q -> 3 -> 1 -> 5 -> 4 -> 2 -> 6");
   Serial.println();
   Serial.println("x = stop semua hip");
   Serial.println("l = emergency stop semua servo");
   Serial.println("h = help");
-  Serial.println();
-  Serial.println("Contoh urutan:");
-  Serial.println("q -> 1 -> 2 -> 3 -> 4 -> 5 -> 6");
   Serial.println();
   Serial.println("Setting waktu ada di bagian atas:");
   Serial.println("TIME_TEGAK_SEJAJAR_MS");
@@ -479,7 +606,8 @@ void printHelp() {
   Serial.println("TIME_FOOT_DOWN_FAST_MS");
   Serial.println("TIME_HIP_PREPARE_FAST_MS");
   Serial.println("TIME_PUSH_FULL_MS");
-  Serial.println("=======================================================");
+  Serial.println("TIME_AUTO_STEP_GAP_MS");
+  Serial.println("======================================");
   Serial.println();
 }
 
@@ -501,7 +629,7 @@ void setup() {
 
   Serial.println();
   Serial.println("[BOOT] ESP32 + PCA9685 siap.");
-  Serial.println("[BOOT] Mode manual 4 kaki + push sisi full aktif.");
+  Serial.println("[BOOT] Mode manual + otomatis maju aktif.");
 
   printHelp();
 }
@@ -545,6 +673,22 @@ void loop() {
 
       case '7':
         pushSemuaKeBelakang();
+        break;
+
+      case 'm':
+        majuOtomatisSatuSiklus();
+        break;
+
+      case 'a':
+        majuOtomatisDenganTahapAwal();
+        break;
+      
+      case 'r':
+        belokKananOtomatis();
+        break;
+
+      case 't':
+        belokKiriOtomatis();
         break;
 
       case 'x':
